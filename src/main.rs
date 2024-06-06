@@ -1,5 +1,4 @@
 use nannou::{prelude::*, rand::random_f32};
-use text::glyph::X;
 
 fn main() {
     nannou::app(model).update(update).run();
@@ -24,7 +23,6 @@ fn model(app: &App) -> Model {
         drag_index: Some(0),
         enemy_timer: 0.0,
         spawn_delay: 0.5,
-        camera_position: vec2(0.0, 0.0),
         score: 0,
     }
 }
@@ -63,13 +61,11 @@ impl Rope {
     }
 
     fn update_rope(&mut self, substeps: i32) {
-        let dt = 1.0 / substeps as f32;
-
         for i in 1..self.points.len() {
             let current = self.points[i];
             let prev = self.prev_points[i];
             let velocity = current - prev;
-            let next_position = current + velocity; // Apply gravity here if needed
+            let next_position = current + velocity / 1.008; // Apply gravity here if needed
             self.prev_points[i] = self.points[i];
             self.points[i] = next_position;
         }
@@ -88,7 +84,7 @@ impl Rope {
                 let delta = point_b - point_a;
                 let distance = delta.length();
                 let difference = self.segment_length - distance;
-                let correction = delta.normalize() * (difference / 1.2);
+                let correction = delta.normalize() * (difference / 15.0);
                 if i != 0 {
                     self.points[i] -= correction;
                 }
@@ -144,7 +140,6 @@ struct Model {
     drag_index: Option<usize>,
     enemy_timer: f32,
     spawn_delay: f32,
-    camera_position: Vector2,
     score: i32,
 }
 
@@ -176,9 +171,6 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
 
     spawn_enemies(_app, model);
     despawn_enemies(_app, model);
-
-    // Lerp camera position to the first point of the rope
-    model.camera_position = lerp_vec2(model.camera_position, target_position as Vec2, 0.1);
 }
 
 fn check_collisions(rope: &mut Rope, enemies: &mut [Enemy], substeps: i32) {
@@ -239,7 +231,6 @@ fn view(app: &App, model: &Model, frame: Frame) {
     draw.background().color(BLACK);
 
     // Apply camera transformation
-    draw.x_y(-model.camera_position.x, -model.camera_position.y);
 
     for (i, point) in model.rope.points.iter().enumerate() {
         let radius = if i == 0 || i == model.rope.points.len() - 1 {
@@ -276,12 +267,6 @@ fn lerp(a: Point2, b: Point2, t: f32) -> Point2 {
     let x = a.x + (b.x - a.x) * t;
     let y = a.y + (b.y - a.y) * t;
     Point2::new(x, y)
-}
-
-fn lerp_vec2(a: Vector2, b: Vector2, t: f32) -> Vector2 {
-    let x = a.x + (b.x - a.x) * t;
-    let y = a.y + (b.y - a.y) * t;
-    vec2(x, y)
 }
 
 fn spawn_enemies(app: &App, model: &mut Model) {
