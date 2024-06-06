@@ -4,6 +4,7 @@ use nannou::{
     prelude::*,
     rand::{random_f32, random_range},
 };
+use text::glyph::X;
 
 const SUBSTEPS: usize = 5; // Number of substeps for each update
 
@@ -275,8 +276,35 @@ fn spawn_enemies(app: &App, model: &mut Model) {
     if model.enemy_timer >= model.spawn_delay {
         let margin = 50.0; // Margin outside the window
         let mut win = app.window_rect().pad(margin);
-        let x = random_f32() * (win.w() - margin * 2.0) + win.left();
-        let y = random_f32() * (win.h() - margin * 2.0) + win.bottom();
+
+        // Define the spawn area within the margin
+        // Define the spawn area outside the window
+        let spawn_area = Rect::from_x_y_w_h(
+            win.x(),
+            win.y(),
+            win.w() + margin * 2.0,
+            win.h() + margin * 2.0,
+        );
+        let (x, y) = if random_f32() < 0.5 {
+            // Spawn on the left or right edge
+            let x = if random_f32() < 0.5 {
+                spawn_area.left()
+            } else {
+                spawn_area.right()
+            };
+            let y = random_range(spawn_area.bottom(), spawn_area.top());
+            (x, y)
+        } else {
+            // Spawn on the top or bottom edge
+            let x = random_range(spawn_area.left(), spawn_area.right());
+            let y = if random_f32() < 0.5 {
+                spawn_area.bottom()
+            } else {
+                spawn_area.top()
+            };
+            (x, y)
+        };
+
         let position = Point2::new(x, y);
         let radius = random_range(10.0, 20.0);
         let color = Rgba::new(random_f32(), random_f32(), random_f32(), 1.0);
