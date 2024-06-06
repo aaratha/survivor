@@ -18,7 +18,6 @@ fn model(app: &App) -> Model {
     let count = 12;
 
     Model {
-        balls: vec![],
         rope: Rope::new(start, end, count),
         enemies: vec![],
         is_dragging: false,
@@ -63,8 +62,6 @@ impl Rope {
     }
 
     fn update_rope(&mut self) {
-        let gravity = vec2(0.0, -0.1);
-
         for i in 1..self.points.len() {
             let current = self.points[i];
             let prev = self.prev_points[i];
@@ -86,8 +83,8 @@ impl Rope {
                 let delta = point_b - point_a;
                 let distance = delta.length();
                 let difference = self.segment_length - distance;
-                let correction = delta.normalize() * (difference / 1.2);
-                if i != 0 {
+                let correction = delta.normalize() * (difference / 1.1);
+                if (i != 0) {
                     self.points[i] -= correction;
                 }
                 self.points[i + 1] += correction;
@@ -98,6 +95,7 @@ impl Rope {
 
 struct Enemy {
     position: Point2,
+    prev_position: Point2,
     radius: f32,
     color: Rgba,
 }
@@ -106,21 +104,26 @@ impl Enemy {
     fn new(position: Point2, radius: f32, color: Rgba) -> Self {
         Enemy {
             position,
+            prev_position: position,
             radius,
             color,
         }
     }
-}
 
-struct Ball {
-    position: Point2,
-    velocity: Vector2,
-    radius: f32,
-    color: Rgba,
+    fn update(&mut self, target: Point2) {
+        let current = self.position;
+        let prev = self.prev_position;
+        let velocity = current - prev;
+        self.prev_position = current;
+
+        // Move towards the target (first point of the rope)
+        let direction = (target - current).normalize();
+        let next_position = current + velocity + direction * 0.1;
+        self.position = next_position;
+    }
 }
 
 struct Model {
-    balls: Vec<Ball>,
     enemies: Vec<Enemy>,
     rope: Rope,
     is_dragging: bool,
@@ -143,9 +146,32 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
     }
     spawn_enemies(_app, model);
 
-    // Lerp camera position to the first point of the rope
+    // Update enemies to move towards the first rope point
     let target_position = model.rope.points[0];
+    for enemy in model.enemies.iter_mut() {
+        enemy.update(target_position);
+    }
+
+    // Check for collisions
+    check_collisions(&mut model.rope, &mut model.enemies);
+
+    // Lerp camera position to the first point of the rope
     model.camera_position = lerp_vec2(model.camera_position, target_position as Vec2, 0.1);
+}
+
+fn check_collisions(rope: &mut Rope, enemies: &mut [Enemy]) {
+    for enemy in enemies.iter_mut() {
+        for point in rope.points.iter_mut() {
+            let distance = enemy.position.distance(*point + (rope.thickness));
+            if distance < enemy.radius {
+                // Simple collision response: move both enemy and rope point away from each other
+                let direction = (enemy.position - *point).normalize();
+                let overlap = enemy.radius - distance;
+                enemy.position += direction * overlap * 0.5;
+                *point -= direction * overlap * 0.5;
+            }
+        }
+    }
 }
 
 fn mouse_pressed(_app: &App, model: &mut Model, _button: MouseButton) {
@@ -180,7 +206,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
         let radius = if i == 0 || i == model.rope.points.len() - 1 {
             model.rope.thickness * 2.0 // First and last points are larger
         } else {
-            model.rope.thickness / 2.0
+            model.rope.thickness
         };
 
         draw.ellipse()
@@ -217,7 +243,7 @@ fn spawn_enemies(app: &App, model: &mut Model) {
         let x = random_f32() * win.w() - win.w() / 2.0;
         let y = random_f32() * win.h() - win.h() / 2.0;
         let position = Point2::new(x, y);
-        let radius = random_range(5.0, 20.0);
+        let radius = random_range(10.0, 20.0);
         let color = Rgba::new(random_f32(), random_f32(), random_f32(), 1.0);
         model.enemies.push(Enemy::new(position, radius, color));
         model.enemy_timer = 0.0;
