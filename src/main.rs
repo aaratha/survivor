@@ -1,4 +1,11 @@
-use nannou::{prelude::*, rand::random_f32};
+use std::process;
+
+use nannou::{
+    prelude::*,
+    rand::{random_f32, random_range},
+};
+
+const SUBSTEPS: usize = 5; // Number of substeps for each update
 
 fn main() {
     nannou::app(model).update(update).run();
@@ -14,8 +21,8 @@ fn model(app: &App) -> Model {
         .unwrap();
 
     let start = Point2::new(0.0, 0.0);
-    let end = Point2::new(100.0, 0.0);
-    let count = 12;
+    let end = Point2::new(40.0, 0.0);
+    let count = 4;
 
     Model {
         rope: Rope::new(start, end, count),
@@ -23,8 +30,9 @@ fn model(app: &App) -> Model {
         is_dragging: false,
         drag_index: Some(0),
         enemy_timer: 0.0,
-        spawn_delay: 0.5,
+        spawn_delay: 1.0,
         camera_position: vec2(0.0, 0.0),
+        score: 0,
     }
 }
 
@@ -51,40 +59,42 @@ impl Rope {
         Rope {
             points,
             prev_points,
-            segment_length,
+            segment_length, // Update segment length here
             thickness: 4.0,
             color: nannou::color::Rgba::new(1.0, 1.0, 1.0, 1.0),
         }
     }
 
     fn update(&mut self) {
-        self.update_rope();
+        // Perform Verlet integration with sub-stepping
+        let substep_delta = 1.0 / SUBSTEPS as f32;
+        for _ in 0..SUBSTEPS {
+            self.verlet_integration(substep_delta);
+            self.constrain_points();
+        }
     }
 
-    fn update_rope(&mut self) {
-        for i in 1..self.points.len() {
-            let current = self.points[i];
-            let prev = self.prev_points[i];
-            let velocity = current - prev;
-            let next_position = current + velocity; // + gravity;
+    fn verlet_integration(&mut self, dt: f32) {
+        for i in 1..self.points.len() - 1 {
+            let velocity = self.points[i] - self.prev_points[i];
+            let next_position = self.points[i] + velocity * dt * dt; // Add gravity
             self.prev_points[i] = self.points[i];
             self.points[i] = next_position;
         }
-
-        self.constrain_points();
     }
 
     fn constrain_points(&mut self) {
         let count = self.points.len();
+        let segment_length = self.segment_length;
         for _ in 0..5 {
             for i in 0..(count - 1) {
                 let point_a = self.points[i];
                 let point_b = self.points[i + 1];
                 let delta = point_b - point_a;
                 let distance = delta.length();
-                let difference = self.segment_length - distance;
+                let difference = segment_length - distance;
                 let correction = delta.normalize() * (difference / 1.1);
-                if (i != 0) {
+                if i != 0 {
                     self.points[i] -= correction;
                 }
                 self.points[i + 1] += correction;
@@ -131,11 +141,14 @@ struct Model {
     enemy_timer: f32,
     spawn_delay: f32,
     camera_position: Vector2,
+    score: i32,
 }
 
 fn update(_app: &App, model: &mut Model, _update: Update) {
     model.enemy_timer += 0.01;
-    model.rope.update();
+    for _ in 0..SUBSTEPS {
+        model.rope.update();
+    }
     if model.is_dragging {
         if let Some(index) = model.drag_index {
             let cursor_position = _app.mouse.position();
@@ -145,6 +158,7 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
         }
     }
     spawn_enemies(_app, model);
+    despawn_enemies(_app, &mut model.enemies);
 
     // Update enemies to move towards the first rope point
     let target_position = model.rope.points[0];
@@ -156,22 +170,33 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
     check_collisions(&mut model.rope, &mut model.enemies);
 
     // Lerp camera position to the first point of the rope
-    model.camera_position = lerp_vec2(model.camera_position, target_position as Vec2, 0.1);
+    model.camera_position = lerp_vec2(model.camera_position, target_position.into(), 0.1);
+
+    model.spawn_delay -= 0.0001;
+
+    let game_over = check_collisions(&mut model.rope, &mut model.enemies);
+
+    // Set game over flag if collision detected
+    if game_over {
+        println!("Game Over!");
+        println!("Score: {}", model.score);
+        process::exit(0);
+
+        // Additional game over logic can be added here
+    }
 }
 
-fn check_collisions(rope: &mut Rope, enemies: &mut [Enemy]) {
+fn check_collisions(rope: &mut Rope, enemies: &mut [Enemy]) -> bool {
     for enemy in enemies.iter_mut() {
         for point in rope.points.iter_mut() {
             let distance = enemy.position.distance(*point + (rope.thickness));
             if distance < enemy.radius {
-                // Simple collision response: move both enemy and rope point away from each other
-                let direction = (enemy.position - *point).normalize();
-                let overlap = enemy.radius - distance;
-                enemy.position += direction * overlap * 0.5;
-                *point -= direction * overlap * 0.5;
+                // Set game over flag if collision detected
+                return true;
             }
         }
     }
+    false
 }
 
 fn mouse_pressed(_app: &App, model: &mut Model, _button: MouseButton) {
@@ -221,6 +246,15 @@ fn view(app: &App, model: &Model, frame: Frame) {
             .color(enemy.color);
     }
 
+    // Draw the score
+    draw.text(&model.score.to_string())
+        .x_y(
+            -app.window_rect().right() + 50.0,
+            app.window_rect().top() - 50.0,
+        )
+        .color(WHITE)
+        .font_size(48);
+
     // Write the result of our drawing to the window's frame.
     draw.to_frame(app, &frame).unwrap();
 }
@@ -239,13 +273,40 @@ fn lerp_vec2(a: Vector2, b: Vector2, t: f32) -> Vector2 {
 
 fn spawn_enemies(app: &App, model: &mut Model) {
     if model.enemy_timer >= model.spawn_delay {
-        let win = app.window_rect();
-        let x = random_f32() * win.w() - win.w() / 2.0;
-        let y = random_f32() * win.h() - win.h() / 2.0;
+        let margin = 50.0; // Margin outside the window
+        let mut win = app.window_rect().pad(margin);
+        let x = random_f32() * (win.w() - margin * 2.0) + win.left();
+        let y = random_f32() * (win.h() - margin * 2.0) + win.bottom();
         let position = Point2::new(x, y);
         let radius = random_range(10.0, 20.0);
         let color = Rgba::new(random_f32(), random_f32(), random_f32(), 1.0);
         model.enemies.push(Enemy::new(position, radius, color));
+
         model.enemy_timer = 0.0;
+        model.score += 1;
+
+        // Update rope length and point count when the score increases
+        if model.score % 3 == 0 {
+            // Add a new point every 3 score points
+            let count = model.rope.points.len() + 1; // Increment point count
+
+            // Calculate the new segment length based on the updated count of points
+            let start = model.rope.points[0];
+            let end = model.rope.points[model.rope.points.len() - 1];
+            let direction = (end - start).normalize();
+            let length = start.distance(end);
+            let segment_length = length / (count as f32 - 1.0);
+
+            // Update the end point of the rope to maintain the curvature
+            let new_end = end + direction * segment_length;
+            model.rope = Rope::new(start, new_end, count);
+        }
     }
+}
+
+fn despawn_enemies(app: &App, enemies: &mut Vec<Enemy>) {
+    let margin = 50.0; // Change this to the size of the margin you want
+    let mut win = app.window_rect();
+    win.pad(margin);
+    enemies.retain(|enemy| win.contains(enemy.position));
 }
